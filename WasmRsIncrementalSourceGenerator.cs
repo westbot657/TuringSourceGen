@@ -117,6 +117,9 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
 
             var className = classDeclarationSyntax.Identifier.Text;
 
+            if (!classSymbol.GetAttributes()
+                    .Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.RustClass")) continue;
+            
             var wrapped = classSymbol.GetMembers()
                 .OfType<IFieldSymbol>()
                 .Where(f => f.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.RustWrapped"))
@@ -165,7 +168,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             codeBuilder.AppendLine("using System.Runtime.InteropServices;");
             codeBuilder.AppendLine($"namespace {namespaceName} {{");
             
-            ConstructSource(context, codeBuilder, className, wrapped, fields, methods);
+            ConstructSource(context, classSymbol, codeBuilder, className, wrapped, fields, methods);
             
             codeBuilder.AppendLine("}");
 
@@ -200,7 +203,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
     private const string PtrDeco = "[System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]";
 
 
-    private static List<string> interopBinders = [];
+    private static HashSet<string> interopBinders = [];
     
     private class RustClassConstructor(string name)
     {
@@ -210,7 +213,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
         
         private List<(string del, string func, string? rustName)> delegateNames { get; } = [];
 
-        public void build(StringBuilder sb)
+        public void build(SourceProductionContext context, ITypeSymbol classSymbol, StringBuilder sb)
         {
             sb.AppendLine( "[StructLayout(LayoutKind.Sequential)]");
             sb.AppendLine($"public struct {Name}Rs");
@@ -228,7 +231,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
                 sb.AppendLine($"    {methodDef}");
             }
             
-            interopBinders.Add($"{Name}.BindInteropFunction();");
+            interopBinders.Add($"{classSymbol.ToDisplayString()}.BindInteropFunctions();");
             sb.AppendLine("    public static void BindInteropFunctions()");
             sb.AppendLine("    {");
 
@@ -370,7 +373,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
         
     }
 
-    private static void ConstructSource(SourceProductionContext context, StringBuilder codeBuilder, string className,
+    private static void ConstructSource(SourceProductionContext context, ITypeSymbol classSymbol, StringBuilder codeBuilder, string className,
         FieldData? wrapped, List<FieldData> fields, List<MethodData> methods)
     {
         
@@ -392,7 +395,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
         }
         
         
-        constructor.build(codeBuilder);
+        constructor.build(context, classSymbol, codeBuilder);
         
     }
 
@@ -518,8 +521,8 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
         var x = attr?.ToString();
         if (x != null)
         {
-            var start = x.IndexOf("\"", StringComparison.Ordinal);
-            rustName = x.Substring(start, x.LastIndexOf("\"", StringComparison.Ordinal)-start+1);
+            var start = x.IndexOf("\"", StringComparison.Ordinal)+1;
+            rustName = x.Substring(start, x.LastIndexOf("\"", StringComparison.Ordinal)-start);
         }
 
         var sb = new StringBuilder();
