@@ -100,6 +100,18 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
                 continue;
             }
 
+            var wrapped = classSymbol.GetMembers()
+                .OfType<IFieldSymbol>()
+                .Where(f => f.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.RustWrapped"))
+                .Select(f => new FieldData
+                {
+                    Field = f,
+                    FieldName = f.Name,
+                    Type = f.Type.ToDisplayString(),
+                    IsStatic = f.IsStatic
+                })
+                .First();
+            
             var fields = classSymbol.GetMembers()
                 .OfType<IFieldSymbol>()
                 .Where(f => f.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.RustField"))
@@ -136,7 +148,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             codeBuilder.AppendLine("using System.Runtime.InteropServices;");
             codeBuilder.AppendLine($"namespace {namespaceName} {{");
             
-            ConstructSource(context, codeBuilder, className, fields, methods);
+            ConstructSource(context, codeBuilder, className, wrapped, fields, methods);
             
             codeBuilder.AppendLine("}");
 
@@ -166,9 +178,9 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             
             sb.AppendLine( "}");
             
-            sb.AppendLine($"public partial class {Name}");
+            sb.AppendLine($"public partial class {Name} : Turing.Wasm.IWasmMemoryObject");
             sb.AppendLine( "{");
-            sb.AppendLine( "    public int ReferenceId { get; private set; }");
+            sb.AppendLine( "    public int ReferenceId { get; set; }");
 
             foreach (var methodDef in methodDefs)
             {
@@ -193,6 +205,35 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             
             sb.AppendLine( "}");
+        }
+
+        public void ProcessWrapped(SourceProductionContext context, string className, FieldData wrapped)
+        {
+            var sb = new StringBuilder();
+
+            var attr = wrapped.Field?.GetAttributes().First(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.RustWrapped");
+
+            var rustName = "##ERROR##";
+            var x = attr?.ToString();
+            if (x != null)
+            {
+                var start = x.IndexOf("\"", StringComparison.Ordinal)+1;
+                rustName = x.Substring(start, x.LastIndexOf("\"", StringComparison.Ordinal)-start);
+            }
+
+            sb.AppendLine("[DllImport(dllName: Turing.Wasm.WasmInterop.WASMRS, CallingConvention = CallingConvention.Cdecl)]");
+            sb.AppendLine($"    private static extern void {rustName}({className}Rs wrapped);");
+            
+            sb.AppendLine($"    public {className}({wrapped.Type} wrappedObject)");
+            sb.AppendLine("    {");
+            sb.AppendLine($"        this.{wrapped.FieldName} = wrappedObject;");
+            sb.AppendLine("        var id = Turing.Wasm.WasmInterop.InsertObject(this);");
+            sb.AppendLine($"        var structInst = new {className}Rs {{ ReferenceId = id }};");
+            sb.AppendLine($"        {rustName}(structInst);");
+            sb.AppendLine("    }");
+            
+            methodDefs.Add(sb.ToString());
+            
         }
 
         public void ProcessField(SourceProductionContext context, string className, FieldData field)
@@ -288,10 +329,15 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
     }
 
     private static void ConstructSource(SourceProductionContext context, StringBuilder codeBuilder, string className,
-        List<FieldData> fields, List<MethodData> methods)
+        FieldData? wrapped, List<FieldData> fields, List<MethodData> methods)
     {
         
         var constructor = new RustClassConstructor(className);
+
+        if (wrapped != null)
+        {
+            constructor.ProcessWrapped(context, className, wrapped);
+        }
         
         foreach (var field in fields)
         {
