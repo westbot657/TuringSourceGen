@@ -207,9 +207,11 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
 
             var ret = method.ReturnType;
             var retConverter = (opposite : "void", converterInfo: new MethodData());
+            var retConverter2 = (opposite : "void", converterInfo: new MethodData());
             if (ret != "void")
             {
                 retConverter = conversionTypes[ret];
+                retConverter2 = conversionTypes[retConverter.opposite];
             }
             
             
@@ -271,7 +273,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             if (ret != "void")
             {
                 sb.AppendLine($"        var rsResult = instance.{name}({joinedArgs});");
-                sb.AppendLine($"        return {retConverter.converterInfo.Name}(rsResult);");
+                sb.AppendLine($"        return Codec.{retConverter2.converterInfo.Name}(rsResult);");
             }
             else
             {
