@@ -22,6 +22,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
     
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
+        interopBinders.Clear();
         var rustClassProvider = context.SyntaxProvider
             .CreateSyntaxProvider(
                 (s, _) => s is ClassDeclarationSyntax,
@@ -45,7 +46,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
 
             var attributeName = attributeSymbol.ContainingType.ToDisplayString();
 
-            if (attributeName is "Turing.Wasm.RustClass" or "Turing.Wasm.CodecClass")
+            if (attributeName is "Turing.Wasm.RustClass" or "Turing.Wasm.CodecClass" or "Turing.Wasm.InteropClass")
                 return (classDeclarationSyntax, true);
         }
 
@@ -77,9 +78,31 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
     }
     
     private void GenerateCode(SourceProductionContext context, Compilation compilation,
-        ImmutableArray<ClassDeclarationSyntax> classDeclarations)
+        ImmutableArray<ClassDeclarationSyntax> _classDeclarations)
     {
-        // Go through all filtered class declarations.
+        var classDeclarations = _classDeclarations.ToList();
+        // first, search for codec, since it has to be constructed before anything else
+        foreach (var classDeclarationSyntax in classDeclarations)
+        {
+
+            // We need to get semantic model of the class to retrieve metadata.
+            var semanticModel = compilation.GetSemanticModel(classDeclarationSyntax.SyntaxTree);
+
+            // Symbols allow us to get the compile-time information.
+            if (semanticModel.GetDeclaredSymbol(classDeclarationSyntax) is not INamedTypeSymbol classSymbol)
+                continue;
+
+            var namespaceName = classSymbol.ContainingNamespace.ToDisplayString();
+
+            var className = classDeclarationSyntax.Identifier.Text;
+
+            if (!classSymbol.GetAttributes()
+                    .Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.CodecClass")) continue;
+            BuildCodec(context, classSymbol, namespaceName, className);
+            break;
+        }
+
+        // then build things that rely on the codec
         foreach (var classDeclarationSyntax in classDeclarations)
         {
             
@@ -89,16 +112,10 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             // Symbols allow us to get the compile-time information.
             if (semanticModel.GetDeclaredSymbol(classDeclarationSyntax) is not INamedTypeSymbol classSymbol)
                 continue;
-            
+
             var namespaceName = classSymbol.ContainingNamespace.ToDisplayString();
 
             var className = classDeclarationSyntax.Identifier.Text;
-
-            if (classSymbol.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.CodecClass"))
-            {
-                BuildCodec(context, classSymbol, namespaceName, className);
-                continue;
-            }
 
             var wrapped = classSymbol.GetMembers()
                 .OfType<IFieldSymbol>()
@@ -157,10 +174,34 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             // Add the source code to the compilation.
             context.AddSource($"{className}.g.cs", SourceText.From(code, Encoding.UTF8));
         }
+
+        // and finally, build a function to call all the dll binding functions
+        foreach (var classDeclarationSyntax in classDeclarations)
+        {
+
+            // We need to get semantic model of the class to retrieve metadata.
+            var semanticModel = compilation.GetSemanticModel(classDeclarationSyntax.SyntaxTree);
+
+            // Symbols allow us to get the compile-time information.
+            if (semanticModel.GetDeclaredSymbol(classDeclarationSyntax) is not INamedTypeSymbol classSymbol)
+                continue;
+
+            var namespaceName = classSymbol.ContainingNamespace.ToDisplayString();
+
+            var className = classDeclarationSyntax.Identifier.Text;
+
+            if (!classSymbol.GetAttributes()
+                    .Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.InteropClass")) continue;
+            BuildBindCalls(context, classSymbol, namespaceName, className);
+            break;
+        }
     }
 
     private const string PtrDeco = "[System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]";
 
+
+    private static List<string> interopBinders = [];
+    
     private class RustClassConstructor(string name)
     {
         private string Name { get; } = name;
@@ -187,6 +228,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
                 sb.AppendLine($"    {methodDef}");
             }
             
+            interopBinders.Add($"{Name}.BindInteropFunction();");
             sb.AppendLine("    public static void BindInteropFunctions()");
             sb.AppendLine("    {");
 
@@ -464,6 +506,40 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
         
         context.AddSource($"{className}.g.cs", mapBuilder.ToString());
         
+    }
+
+
+    private void BuildBindCalls(SourceProductionContext context, INamedTypeSymbol classSymbol, string namespaceName,
+        string className)
+    {
+        var attr = classSymbol.GetAttributes().First(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.InteropClass");
+
+        var rustName = "##ERROR##";
+        var x = attr?.ToString();
+        if (x != null)
+        {
+            var start = x.IndexOf("\"", StringComparison.Ordinal);
+            rustName = x.Substring(start, x.LastIndexOf("\"", StringComparison.Ordinal)-start+1);
+        }
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"namespace {namespaceName} {{");
+        sb.AppendLine($"    public static partial class {className} {{");
+
+        sb.AppendLine($"        public static void {rustName}()");
+        sb.AppendLine($"        {{");
+        
+        foreach (var callback in interopBinders)
+        {
+            sb.AppendLine($"            {callback}");
+        }
+        
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+        sb.AppendLine("}");
+        
+        
+        context.AddSource($"{className}Binding.g.cs", sb.ToString());
     }
     
 
