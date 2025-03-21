@@ -361,7 +361,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             sb.AppendLine("");
             sb.AppendLine($"    public static {retConverter.opposite} {name}Rs({joinedParams2})");
             sb.AppendLine("    {");
-            sb.AppendLine($"        var instance = ({className}) GCHandler.FromIntPtr(instanceRs.ptr);");
+            sb.AppendLine($"        var instance = ({className}) GCHandle.FromIntPtr(instanceRs.ptr).Target;");
 
             foreach (var conversion in argConversions)
             {
