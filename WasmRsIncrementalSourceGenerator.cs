@@ -222,7 +222,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             
             sb.AppendLine( "}");
             
-            sb.AppendLine($"public partial class {Name}");
+            sb.AppendLine($"public partial class {Name} : IDisposable");
             sb.AppendLine( "{");
 
             foreach (var methodDef in methodDefs)
@@ -280,12 +280,12 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             sb.AppendLine("        var instPtr = GCHandle.ToIntPtr(internalMemoryHandle);");
             sb.AppendLine($"        this.structInst = new {className}Rs {{ ptr = instPtr }};");
             sb.AppendLine("        Turing.Wasm.WasmInterop.PersistentMemory.Add(this);");
-            sb.AppendLine($"        bind_{rustName}(structInst);");
+            // sb.AppendLine($"        bind_{rustName}(structInst);");
             sb.AppendLine("    }");
             
-            sb.AppendLine($"    ~{className}()");
+            sb.AppendLine("    public void Dispose()");
             sb.AppendLine("    {");
-            sb.AppendLine($"        free_{rustName}(this.structInst);");
+            // sb.AppendLine($"        free_{rustName}(this.structInst);");
             sb.AppendLine("        internalMemoryHandle.Free();");
             sb.AppendLine("    }");
             
