@@ -10,15 +10,11 @@ using Microsoft.CodeAnalysis.Text;
 
 namespace TuringSourceGen;
 
-/// <summary>
-/// A sample source generator that creates a custom report based on class properties. The target class should be annotated with the 'Generators.ReportAttribute' attribute.
-/// When using the source code as a baseline, an incremental source generator is preferable because it reduces the performance overhead.
-/// </summary>
 [Generator]
 public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
 {
 
-    private static Dictionary<string, (string opposite, MethodData converterInfo)> conversionTypes = new();
+    private static Dictionary<string, (string opposite, MethodData converterInfo)> _conversionTypes = new();
     
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -308,8 +304,8 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             var retConverter2 = (opposite : "void", converterInfo: new MethodData());
             if (ret != "void")
             {
-                retConverter = conversionTypes[ret];
-                retConverter2 = conversionTypes[retConverter.opposite];
+                retConverter = _conversionTypes[ret];
+                retConverter2 = _conversionTypes[retConverter.opposite];
             }
             
             
@@ -324,7 +320,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             foreach (var param in method.Parameters)
             {
                 var paramType = param.Type;
-                var paramTypeConverter = conversionTypes[paramType];
+                var paramTypeConverter = _conversionTypes[paramType];
                 
                 args.Add($"{param.Name}Converted");
                 parameters.Add($"{paramTypeConverter.opposite} {param.Name}");
@@ -455,7 +451,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
         mapBuilder.AppendLine("        private static readonly System.Collections.Generic.Dictionary<string, System.Func<object, object>> converters = new System.Collections.Generic.Dictionary<string, System.Func<object, object>>()");
         mapBuilder.AppendLine("        {");
         
-        conversionTypes.Clear();
+        _conversionTypes.Clear();
 
         foreach (var methodData in converters)
         {
@@ -493,7 +489,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             
             if (isInvalid) continue;
 
-            conversionTypes[methodData.data.ReturnType] = (methodData.data.Parameters[0].Type,  new MethodData
+            _conversionTypes.Add(methodData.data.ReturnType, (methodData.data.Parameters[0].Type, new MethodData
             {
                 MethodSymbol = methodData.m,
                 Name = methodData.data.Name,
@@ -505,7 +501,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
                     Name = p.Name,
                     Type = p.Type
                 }).ToList()
-            });
+            }));
             
             mapBuilder.AppendLine($"            {{ \"{methodData.data.ReturnType}\", v => {methodData.data.Name}(({methodData.data.Parameters[0].Type}) v) }},");
             
