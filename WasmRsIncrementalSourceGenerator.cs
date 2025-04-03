@@ -10,15 +10,11 @@ using Microsoft.CodeAnalysis.Text;
 
 namespace TuringSourceGen;
 
-/// <summary>
-/// A sample source generator that creates a custom report based on class properties. The target class should be annotated with the 'Generators.ReportAttribute' attribute.
-/// When using the source code as a baseline, an incremental source generator is preferable because it reduces the performance overhead.
-/// </summary>
 [Generator]
 public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
 {
 
-    private static Dictionary<string, (string opposite, MethodData converterInfo)> conversionTypes = new();
+    private static Dictionary<string, (string opposite, MethodData converterInfo)> _conversionTypes = new();
     
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -218,13 +214,12 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             sb.AppendLine( "[StructLayout(LayoutKind.Sequential)]");
             sb.AppendLine($"public struct {Name}Rs");
             sb.AppendLine( "{");
-            sb.AppendLine( "    public int ReferenceId;");
+            sb.AppendLine( "    public IntPtr ptr;");
             
             sb.AppendLine( "}");
             
-            sb.AppendLine($"public partial class {Name} : Turing.Interop.IWasmMemoryObject");
+            sb.AppendLine($"public partial class {Name} : IDisposable");
             sb.AppendLine( "{");
-            sb.AppendLine( "    public int ReferenceId { get; set; }");
 
             foreach (var methodDef in methodDefs)
             {
@@ -267,14 +262,27 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             }
 
             sb.AppendLine("[DllImport(dllName: Turing.Interop.WasmInterop.WASMRS, CallingConvention = CallingConvention.Cdecl)]");
-            sb.AppendLine($"    private static extern void {rustName}({className}Rs wrapped);");
+            sb.AppendLine($"    private static extern void bind_{rustName}({className}Rs wrapped);");
             
+            sb.AppendLine("    [DllImport(dllName: Turing.Wasm.WasmInterop.WASMRS, CallingConvention = CallingConvention.Cdecl)]");
+            sb.AppendLine($"    private static extern void free_{rustName}({className}Rs wrapped);");
+
+            sb.AppendLine("    private GCHandle internalMemoryHandle;");
+            sb.AppendLine($"    private {className}Rs structInst;");
             sb.AppendLine($"    public {className}({wrapped.Type} wrappedObject)");
             sb.AppendLine("    {");
             sb.AppendLine($"        this.{wrapped.FieldName} = wrappedObject;");
-            sb.AppendLine("        var id = Turing.Interop.WasmInterop.InsertObject(this);");
-            sb.AppendLine($"        var structInst = new {className}Rs {{ ReferenceId = id }};");
-            sb.AppendLine($"        {rustName}(structInst);");
+            sb.AppendLine("        this.internalMemoryHandle = GCHandle.Alloc(this, GCHandleType.Pinned);");
+            sb.AppendLine("        var instPtr = GCHandle.ToIntPtr(internalMemoryHandle);");
+            sb.AppendLine($"        this.structInst = new {className}Rs {{ ptr = instPtr }};");
+            sb.AppendLine("        Turing.Interop.WasmInterop.PersistentMemory.Add(this);");
+            // sb.AppendLine($"        bind_{rustName}(structInst);");
+            sb.AppendLine("    }");
+            
+            sb.AppendLine("    public void Dispose()");
+            sb.AppendLine("    {");
+            // sb.AppendLine($"        free_{rustName}(this.structInst);");
+            sb.AppendLine("        internalMemoryHandle.Free();");
             sb.AppendLine("    }");
             
             methodDefs.Add(sb.ToString());
@@ -296,8 +304,8 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             var retConverter2 = (opposite : "void", converterInfo: new MethodData());
             if (ret != "void")
             {
-                retConverter = conversionTypes[ret];
-                retConverter2 = conversionTypes[retConverter.opposite];
+                retConverter = _conversionTypes[ret];
+                retConverter2 = _conversionTypes[retConverter.opposite];
             }
             
             
@@ -312,7 +320,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             foreach (var param in method.Parameters)
             {
                 var paramType = param.Type;
-                var paramTypeConverter = conversionTypes[paramType];
+                var paramTypeConverter = _conversionTypes[paramType];
                 
                 args.Add($"{param.Name}Converted");
                 parameters.Add($"{paramTypeConverter.opposite} {param.Name}");
@@ -349,7 +357,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             sb.AppendLine("");
             sb.AppendLine($"    public static {retConverter.opposite} {name}Rs({joinedParams2})");
             sb.AppendLine("    {");
-            sb.AppendLine($"        var instance = ({className}) WasmInterop.getObject(instanceRs.ReferenceId);");
+            sb.AppendLine($"        var instance = ({className}) GCHandle.FromIntPtr(instanceRs.ptr).Target;");
 
             foreach (var conversion in argConversions)
             {
@@ -436,13 +444,14 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             }}).ToList();
 
         var mapBuilder = new StringBuilder();
-        
+
+        mapBuilder.AppendLine("// <auto-generated/>");
         mapBuilder.AppendLine($"namespace {namespaceName} {{");
         mapBuilder.AppendLine($"    public partial class {className} {{");
         mapBuilder.AppendLine("        private static readonly System.Collections.Generic.Dictionary<string, System.Func<object, object>> converters = new System.Collections.Generic.Dictionary<string, System.Func<object, object>>()");
         mapBuilder.AppendLine("        {");
         
-        conversionTypes.Clear();
+        _conversionTypes.Clear();
 
         foreach (var methodData in converters)
         {
@@ -480,7 +489,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             
             if (isInvalid) continue;
 
-            conversionTypes[methodData.data.ReturnType] = (methodData.data.Parameters[0].Type,  new MethodData
+            _conversionTypes.Add(methodData.data.ReturnType, (methodData.data.Parameters[0].Type, new MethodData
             {
                 MethodSymbol = methodData.m,
                 Name = methodData.data.Name,
@@ -492,7 +501,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
                     Name = p.Name,
                     Type = p.Type
                 }).ToList()
-            });
+            }));
             
             mapBuilder.AppendLine($"            {{ \"{methodData.data.ReturnType}\", v => {methodData.data.Name}(({methodData.data.Parameters[0].Type}) v) }},");
             
@@ -515,7 +524,8 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
     private void BuildBindCalls(SourceProductionContext context, INamedTypeSymbol classSymbol, string namespaceName,
         string className)
     {
-        var attr = classSymbol.GetAttributes().First(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.InteropClass");
+        
+        var attr = classSymbol.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.InteropClass");
 
         var rustName = "##ERROR##";
         var x = attr?.ToString();
@@ -526,8 +536,47 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
         }
 
         var sb = new StringBuilder();
-        sb.AppendLine($"namespace {namespaceName} {{");
-        sb.AppendLine($"    public static partial class {className} {{");
+        sb.AppendLine("// <auto-generated/>");
+        sb.AppendLine("using System;");
+        sb.AppendLine("using System.Runtime.InteropServices;");
+        sb.AppendLine($"namespace {namespaceName}");
+        sb.AppendLine("{");
+        sb.AppendLine($"    public static partial class {className}");
+        sb.AppendLine("    {");
+        
+        var callbackMethods = classSymbol.GetMembers()
+            .OfType<IMethodSymbol>()
+            .Where(m => m.GetAttributes()
+                .Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.RustCallback"));
+
+        foreach (var callback in callbackMethods)
+        {
+            var callbackAttr = callback.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.RustCallback");
+
+            var callbackRustName = "##ERROR##";
+            var y = callbackAttr?.ToString();
+            if (y != null)
+            {
+                var start = y.IndexOf("\"", StringComparison.Ordinal);
+                callbackRustName = y.Substring(start, y.LastIndexOf("\"", StringComparison.Ordinal)-start+1);
+            }
+
+            sb.AppendLine("        [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]");
+            sb.AppendLine($"        public delegate {callback.ReturnType.ToDisplayString()} _{callback.Name}({string.Join(", ", callback.Parameters)});");
+
+            sb.AppendLine($"        public static void Bind{callback.Name}()");
+            sb.AppendLine("        {");
+            sb.AppendLine($"            var del = Delegate.CreateDelegate(typeof(_{callback.Name}), typeof({classSymbol.ToDisplayString()}).GetMethod(\"{callback.Name}\"));");
+            sb.AppendLine("            var funcPtr = System.Runtime.InteropServices.Marshal.GetFunctionPointerForDelegate(del);");
+            sb.AppendLine($"            var namePtr = System.Runtime.InteropServices.Marshal.StringToHGlobalUni({callbackRustName});");
+            sb.AppendLine("            register_function(namePtr, funcPtr);");
+            sb.AppendLine("            System.Runtime.InteropServices.Marshal.FreeHGlobal(namePtr);");
+            sb.AppendLine("        }");
+
+            interopBinders.Add($"Bind{callback.Name}();");
+
+        }
+        
 
         sb.AppendLine($"        public static void {rustName}()");
         sb.AppendLine($"        {{");
