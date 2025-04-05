@@ -42,7 +42,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
 
             var attributeName = attributeSymbol.ContainingType.ToDisplayString();
 
-            if (attributeName is "Turing.Wasm.RustClass" or "Turing.Wasm.CodecClass" or "Turing.Wasm.InteropClass")
+            if (attributeName is "Turing.Interop.RustClass" or "Turing.Interop.CodecClass" or "Turing.Interop.InteropClass")
                 return (classDeclarationSyntax, true);
         }
 
@@ -93,7 +93,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             var className = classDeclarationSyntax.Identifier.Text;
 
             if (!classSymbol.GetAttributes()
-                    .Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.CodecClass")) continue;
+                    .Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.CodecClass")) continue;
             BuildCodec(context, classSymbol, namespaceName, className);
             break;
         }
@@ -114,11 +114,11 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             var className = classDeclarationSyntax.Identifier.Text;
 
             if (!classSymbol.GetAttributes()
-                    .Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.RustClass")) continue;
+                    .Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.RustClass")) continue;
             
             var wrapped = classSymbol.GetMembers()
                 .OfType<IFieldSymbol>()
-                .Where(f => f.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.RustWrapped"))
+                .Where(f => f.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.RustWrapped"))
                 .Select(f => new FieldData
                 {
                     Field = f,
@@ -130,7 +130,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             
             var fields = classSymbol.GetMembers()
                 .OfType<IFieldSymbol>()
-                .Where(f => f.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.RustField"))
+                .Where(f => f.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.RustField"))
                 .Select(f => new FieldData
                 {
                     Field = f,
@@ -143,7 +143,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             var methods = classSymbol.GetMembers()
                 .OfType<IMethodSymbol>()
                 .Where(m => m.GetAttributes()
-                    .Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.RustMethod"))
+                    .Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.RustMethod"))
                 .Select(m => new MethodData
                 {
                     MethodSymbol = m,
@@ -190,7 +190,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             var className = classDeclarationSyntax.Identifier.Text;
 
             if (!classSymbol.GetAttributes()
-                    .Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.InteropClass")) continue;
+                    .Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.InteropClass")) continue;
             BuildBindCalls(context, classSymbol, namespaceName, className);
             break;
         }
@@ -251,7 +251,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
         {
             var sb = new StringBuilder();
 
-            var attr = wrapped.Field?.GetAttributes().First(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.RustWrapped");
+            var attr = wrapped.Field?.GetAttributes().First(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.RustWrapped");
 
             var rustName = "##ERROR##";
             var x = attr?.ToString();
@@ -261,7 +261,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
                 rustName = x.Substring(start, x.LastIndexOf("\"", StringComparison.Ordinal)-start);
             }
 
-            sb.AppendLine("[DllImport(dllName: Turing.Wasm.WasmInterop.WASMRS, CallingConvention = CallingConvention.Cdecl)]");
+            sb.AppendLine("[DllImport(dllName: Turing.Interop.WasmInterop.WASMRS, CallingConvention = CallingConvention.Cdecl)]");
             sb.AppendLine($"    private static extern void bind_{rustName}({className}Rs wrapped);");
             
             sb.AppendLine("    [DllImport(dllName: Turing.Wasm.WasmInterop.WASMRS, CallingConvention = CallingConvention.Cdecl)]");
@@ -275,7 +275,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             sb.AppendLine("        this.internalMemoryHandle = GCHandle.Alloc(this, GCHandleType.Pinned);");
             sb.AppendLine("        var instPtr = GCHandle.ToIntPtr(internalMemoryHandle);");
             sb.AppendLine($"        this.structInst = new {className}Rs {{ ptr = instPtr }};");
-            sb.AppendLine("        Turing.Wasm.WasmInterop.PersistentMemory.Add(this);");
+            sb.AppendLine("        Turing.Interop.WasmInterop.PersistentMemory.Add(this);");
             // sb.AppendLine($"        bind_{rustName}(structInst);");
             sb.AppendLine("    }");
             
@@ -336,7 +336,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             sb.AppendLine($"    {PtrDeco}");
             sb.AppendLine($"    private delegate {retConverter.opposite} Delegate{name}({joinedParams});");
 
-            var attr = method.MethodSymbol?.GetAttributes().First(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.RustMethod");
+            var attr = method.MethodSymbol?.GetAttributes().First(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.RustMethod");
 
             var rustName = "##ERROR##";
             var x = attr?.ToString();
@@ -429,7 +429,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
         var converters = classSymbol.GetMembers()
             .OfType<IMethodSymbol>()
             .Where(m => m.GetAttributes()
-                .Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.Converter"))
+                .Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.Converter"))
             .Select(m => new { m, data = new
             {
                 m.Name,
@@ -525,7 +525,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
         string className)
     {
         
-        var attr = classSymbol.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Turing.Wasm.InteropClass");
+        var attr = classSymbol.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.InteropClass");
 
         var rustName = "##ERROR##";
         var x = attr?.ToString();
