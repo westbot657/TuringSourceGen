@@ -14,7 +14,7 @@ namespace TuringSourceGen;
 public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
 {
 
-    private static Dictionary<string, (string opposite, MethodData converterInfo)> _conversionTypes = new();
+    private static readonly Dictionary<string, (string opposite, MethodData converterInfo)> _conversionTypes = new();
     
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
