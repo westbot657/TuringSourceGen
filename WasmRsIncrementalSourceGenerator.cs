@@ -300,18 +300,18 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             var sb = new StringBuilder();
 
             var ret = method.ReturnType;
-            var retConverter = (opposite : "void", converterInfo: new MethodData());
+            // var retConverter = (opposite : "void", converterInfo: new MethodData());
             var retConverter2 = (opposite : "void", converterInfo: new MethodData());
             if (ret != "void")
             {
-                retConverter = ConversionTypes[ret];
-                retConverter2 = ConversionTypes[retConverter.opposite];
+                // retConverter = ConversionTypes[ret];
+                retConverter2 = ConversionTypes[retConverter2.opposite];
             }
             
             
             List<string> argConversions = [];
             
-            List<string> parameters = [];
+            // List<string> parameters = [];
             List<string> args = [];
 
             var i = 1;
@@ -321,12 +321,12 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
                 var paramTypeConverter = ConversionTypes[paramType];
                 
                 args.Add($"{param.Name}Converted");
-                parameters.Add($"{paramTypeConverter.opposite} {param.Name}");
+                // parameters.Add($"{paramTypeConverter.opposite} {param.Name}");
                 argConversions.Add($"        var {param.Name}Converted = Codec.{paramTypeConverter.converterInfo.Name}(convertedParams.GetParameter<{paramTypeConverter.opposite}>({i++}));");
             }
-            var joinedParams = string.Join(", ", parameters.ToArray());
-            parameters.Insert(0, $"{className}Rs instanceRs");
-            var joinedParams2 = string.Join(", ", parameters.ToArray());
+            // var joinedParams = string.Join(", ", parameters.ToArray());
+            // parameters.Insert(0, $"{className}Rs instanceRs");
+            // var joinedParams2 = string.Join(", ", parameters.ToArray());
 
             var joinedArgs = string.Join(", ", args.ToArray());
 
