@@ -14,7 +14,7 @@ namespace TuringSourceGen;
 public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
 {
 
-    private static readonly Dictionary<string, (string opposite, MethodData converterInfo)> _conversionTypes = new();
+    private static readonly Dictionary<string, (string opposite, MethodData converterInfo)> ConversionTypes = new();
     
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -264,7 +264,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             sb.AppendLine("[DllImport(dllName: Turing.Interop.WasmInterop.WASMRS, CallingConvention = CallingConvention.Cdecl)]");
             sb.AppendLine($"    private static extern void bind_{rustName}({className}Rs wrapped);");
             
-            sb.AppendLine("    [DllImport(dllName: Turing.Wasm.WasmInterop.WASMRS, CallingConvention = CallingConvention.Cdecl)]");
+            sb.AppendLine("    [DllImport(dllName: Turing.Interop.WasmInterop.WASMRS, CallingConvention = CallingConvention.Cdecl)]");
             sb.AppendLine($"    private static extern void free_{rustName}({className}Rs wrapped);");
 
             sb.AppendLine("    private GCHandle internalMemoryHandle;");
@@ -304,27 +304,25 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             var retConverter2 = (opposite : "void", converterInfo: new MethodData());
             if (ret != "void")
             {
-                retConverter = _conversionTypes[ret];
-                retConverter2 = _conversionTypes[retConverter.opposite];
+                retConverter = ConversionTypes[ret];
+                retConverter2 = ConversionTypes[retConverter.opposite];
             }
             
             
             List<string> argConversions = [];
             
-            
-
-
             List<string> parameters = [];
             List<string> args = [];
-            
+
+            var i = 1;
             foreach (var param in method.Parameters)
             {
                 var paramType = param.Type;
-                var paramTypeConverter = _conversionTypes[paramType];
+                var paramTypeConverter = ConversionTypes[paramType];
                 
                 args.Add($"{param.Name}Converted");
                 parameters.Add($"{paramTypeConverter.opposite} {param.Name}");
-                argConversions.Add($"        var {param.Name}Converted = Codec.{paramTypeConverter.converterInfo.Name}({param.Name});");
+                argConversions.Add($"        var {param.Name}Converted = Codec.{paramTypeConverter.converterInfo.Name}(convertedParams.GetParameter<{paramTypeConverter.opposite}>({i++}));");
             }
             var joinedParams = string.Join(", ", parameters.ToArray());
             parameters.Insert(0, $"{className}Rs instanceRs");
@@ -334,7 +332,9 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
 
             sb.AppendLine("");
             sb.AppendLine($"    {PtrDeco}");
-            sb.AppendLine($"    private delegate {retConverter.opposite} Delegate{name}({joinedParams});");
+
+            sb.AppendLine($"    private delegate Turing.Interop.Parameters.RsParams Delegate{name}(Turing.Interop.Parameters.RsParams rsParams);");
+            // sb.AppendLine($"    private delegate {retConverter.opposite} Delegate{name}({joinedParams});");
 
             var attr = method.MethodSymbol?.GetAttributes().First(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.RustMethod");
 
@@ -355,9 +355,11 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             );
 
             sb.AppendLine("");
-            sb.AppendLine($"    public static {retConverter.opposite} {name}Rs({joinedParams2})");
+            sb.AppendLine($"    public static Turing.Interop.Parameters.RsParams {name}Rs(Turing.Interop.Parameters.RsParams rsParams)");
+            // sb.AppendLine($"    public static {retConverter.opposite} {name}Rs({joinedParams2})");
             sb.AppendLine("    {");
-            sb.AppendLine($"        var instance = ({className}) GCHandle.FromIntPtr(instanceRs.ptr).Target;");
+            sb.AppendLine("        var convertedParams = Turing.Interop.Parameters.Parameters.Unpack(rsParams);");
+            sb.AppendLine($"        var instance = ({className}) GCHandle.FromIntPtr(convertedParams.GetParameter<{className}Rs>(0).ptr).Target;");
 
             foreach (var conversion in argConversions)
             {
@@ -367,11 +369,12 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             if (ret != "void")
             {
                 sb.AppendLine($"        var rsResult = instance.{name}({joinedArgs});");
-                sb.AppendLine($"        return Codec.{retConverter2.converterInfo.Name}(rsResult);");
+                sb.AppendLine($"        return new Turing.Interop.Parameters.Parameters().Push(Codec.{retConverter2.converterInfo.Name}(rsResult)).Pack();");
             }
             else
             {
                 sb.AppendLine($"        instance.{name}({joinedArgs});");
+                sb.AppendLine("        return new Turing.Interop.Parameters.RsParams{ param_count = 0, params_array = IntPtr.Zero };");
             }
 
             sb.AppendLine("    }");
@@ -451,7 +454,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
         mapBuilder.AppendLine("        private static readonly System.Collections.Generic.Dictionary<string, System.Func<object, object>> converters = new System.Collections.Generic.Dictionary<string, System.Func<object, object>>()");
         mapBuilder.AppendLine("        {");
         
-        _conversionTypes.Clear();
+        ConversionTypes.Clear();
 
         foreach (var methodData in converters)
         {
@@ -489,7 +492,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             
             if (isInvalid) continue;
 
-            _conversionTypes.Add(methodData.data.ReturnType, (methodData.data.Parameters[0].Type, new MethodData
+            ConversionTypes.Add(methodData.data.ReturnType, (methodData.data.Parameters[0].Type, new MethodData
             {
                 MethodSymbol = methodData.m,
                 Name = methodData.data.Name,
