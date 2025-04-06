@@ -227,6 +227,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             }
             
             interopBinders.Add($"{classSymbol.ToDisplayString()}.BindInteropFunctions();");
+            sb.AppendLine("    private static List<Delegate> _keepAlive = new List<>();");
             sb.AppendLine("    public static void BindInteropFunctions()");
             sb.AppendLine("    {");
 
@@ -236,6 +237,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
                 var v = (useVar ? "var " : "");
                 useVar = false;
                 sb.AppendLine($"        {v}del = Delegate.CreateDelegate(typeof({delegateName.del}), typeof({Name}).GetMethod(\"{delegateName.func}\"));");
+                sb.AppendLine("        _keepAlive.Add(del);");
                 sb.AppendLine($"        {v}funcPtr = Marshal.GetFunctionPointerForDelegate(del);");
                 sb.AppendLine($"        {v}namePtr = Marshal.StringToHGlobalAnsi({delegateName.rustName});");
                 sb.AppendLine("        WasmInterop.register_function(namePtr, funcPtr);");
@@ -328,7 +330,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             sb.AppendLine("");
             sb.AppendLine($"    {PtrDeco}");
 
-            sb.AppendLine($"    private delegate Turing.Interop.Parameters.RsParams Delegate{name}(Turing.Interop.Parameters.RsParams rsParams);");
+            sb.AppendLine($"    public delegate Turing.Interop.Parameters.RsParams Delegate{name}(Turing.Interop.Parameters.RsParams rsParams);");
             // sb.AppendLine($"    private delegate {retConverter.opposite} Delegate{name}({joinedParams});");
 
             var attr = method.MethodSymbol?.GetAttributes().First(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.RustMethod");
@@ -596,10 +598,12 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             }
             
             sb.AppendLine("        }");
-            
+
+            sb.AppendLine("        private static List<Delegate> _keepAlive = new List<>();");
             sb.AppendLine($"        public static void Bind{callback.Name}()");
             sb.AppendLine("        {");
             sb.AppendLine($"            var del = Delegate.CreateDelegate(typeof(_{callback.Name}), typeof({classSymbol.ToDisplayString()}).GetMethod(\"Wrapped{callback.Name}\"));");
+            sb.AppendLine("            _keepAlive.Append(del);");
             sb.AppendLine("            var funcPtr = System.Runtime.InteropServices.Marshal.GetFunctionPointerForDelegate(del);");
             sb.AppendLine($"            var namePtr = System.Runtime.InteropServices.Marshal.StringToHGlobalAnsi({callbackRustName});");
             sb.AppendLine("            register_function(namePtr, funcPtr);");
