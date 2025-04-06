@@ -601,7 +601,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             sb.AppendLine("        {");
             sb.AppendLine($"            var del = Delegate.CreateDelegate(typeof(_{callback.Name}), typeof({classSymbol.ToDisplayString()}).GetMethod(\"Wrapped{callback.Name}\"));");
             sb.AppendLine("            var funcPtr = System.Runtime.InteropServices.Marshal.GetFunctionPointerForDelegate(del);");
-            sb.AppendLine($"            var namePtr = System.Runtime.InteropServices.Marshal.StringToHGlobalUni({callbackRustName});");
+            sb.AppendLine($"            var namePtr = System.Runtime.InteropServices.Marshal.StringToHGlobalAnsi({callbackRustName});");
             sb.AppendLine("            register_function(namePtr, funcPtr);");
             sb.AppendLine("            System.Runtime.InteropServices.Marshal.FreeHGlobal(namePtr);");
             sb.AppendLine("        }");
