@@ -264,7 +264,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             }
 
 
-            sb.AppendLine("    private GCHandle internalMemoryHandle;");
+            sb.AppendLine("private GCHandle internalMemoryHandle;");
             sb.AppendLine($"    public {className}Rs structInst;");
             sb.AppendLine($"    public {className}({wrapped.Type} wrappedObject)");
             sb.AppendLine("    {");
@@ -289,6 +289,25 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
         public void ProcessField(SourceProductionContext context, string className, FieldData field)
         {
             
+        }
+        
+        string GetRsClassName(IMethodSymbol methodSymbol)
+        {
+            var containingType = methodSymbol.ContainingType;
+
+            foreach (var member in containingType.GetMembers())
+            {
+                if (member is IFieldSymbol fieldSymbol)
+                {
+                    foreach (var attributeData in fieldSymbol.GetAttributes())
+                    {
+                        var x = "Turing.Interop.RustWrapped(\"".Length;
+                        return attributeData.ToString().Substring(x, attributeData.ToString().Length-2 - x);
+                        
+                    }
+                }
+            }
+            return null;
         }
 
         public void ProcessMethod(SourceProductionContext context, string className, MethodData method)
@@ -342,12 +361,14 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
                 var start = x.IndexOf("\"", StringComparison.Ordinal);
                 rustName = x.Substring(start, x.LastIndexOf("\"", StringComparison.Ordinal)-start+1);
             }
+            
+            var class_rustName = GetRsClassName(method.MethodSymbol);
 
             delegateNames.Add(
                 (
                     $"Delegate{name}",
                     $"{name}Rs",
-                    rustName
+                    "\"" + class_rustName + "_" + rustName.Substring(1, rustName.Length-1)
                 )
             );
 
