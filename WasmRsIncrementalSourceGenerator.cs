@@ -94,9 +94,11 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
 
             if (!classSymbol.GetAttributes()
                     .Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.CodecClass")) continue;
-            BuildCodec(context, classSymbol, namespaceName, className);
+            BuildCodec(context, classSymbol, namespaceName, className, classDeclarations, compilation);
             break;
         }
+
+
 
         // then build things that rely on the codec
         foreach (var classDeclarationSyntax in classDeclarations)
@@ -445,7 +447,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
         isEnabledByDefault: true);
 
     private static void BuildCodec(SourceProductionContext context, INamedTypeSymbol classSymbol, string namespaceName,
-        string className)
+        string className, List<ClassDeclarationSyntax> RustClasses, Compilation compilation)
     {
         var converters = classSymbol.GetMembers()
             .OfType<IMethodSymbol>()
@@ -526,6 +528,34 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             
             mapBuilder.AppendLine($"            {{ \"{methodData.data.ReturnType}\", v => {methodData.data.Name}(({methodData.data.Parameters[0].Type}) v) }},");
             
+        }
+
+        var sb = new StringBuilder();
+        
+        foreach (var rustClass in RustClasses)
+        {
+            
+            // We need to get semantic model of the class to retrieve metadata.
+            var semanticModel = compilation.GetSemanticModel(rustClass.SyntaxTree);
+
+            // Symbols allow us to get the compile-time information.
+            if (semanticModel.GetDeclaredSymbol(rustClass) is not INamedTypeSymbol rsClassSymbol)
+                continue;
+            var csClass = rsClassSymbol.ToDisplayString();
+            
+            var rsClass = csClass + "Rs";
+            
+            var csClassFiltered = csClass.Replace(".", "_");
+            var rsClassFiltered = csClassFiltered + "Rs";
+
+            sb.AppendLine($"        public static {csClass} {rsClassFiltered}To{csClassFiltered}({rsClass} rs) {{");
+            sb.AppendLine($"            return ({csClass}) GCHandle.FromIntPtr(rs.ptr).Target;");
+            sb.AppendLine("        }");
+            
+            sb.AppendLine($"        public static {rsClass} {csClassFiltered}To{rsClassFiltered}({csClass} cs) {{");
+            sb.AppendLine("            return cs.structInst;");
+            sb.AppendLine("        }");
+
         }
         
         mapBuilder.AppendLine("        };");
