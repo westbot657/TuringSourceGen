@@ -227,7 +227,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             }
             
             interopBinders.Add($"{classSymbol.ToDisplayString()}.BindInteropFunctions();");
-            sb.AppendLine("    private static List<Delegate> _keepAlive = new List<>();");
+            sb.AppendLine("    private static System.Collections.Generic.List<Delegate> _keepAlive = new System.Collections.Generic.List<Delegate>();");
             sb.AppendLine("    public static void BindInteropFunctions()");
             sb.AppendLine("    {");
 
@@ -599,11 +599,11 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             
             sb.AppendLine("        }");
 
-            sb.AppendLine("        private static List<Delegate> _keepAlive = new List<>();");
+            sb.AppendLine("        private static System.Collections.Generic.List<Delegate> _keepAlive = new System.Collections.Generic.List<Delegate>();");
             sb.AppendLine($"        public static void Bind{callback.Name}()");
             sb.AppendLine("        {");
             sb.AppendLine($"            var del = Delegate.CreateDelegate(typeof(_{callback.Name}), typeof({classSymbol.ToDisplayString()}).GetMethod(\"Wrapped{callback.Name}\"));");
-            sb.AppendLine("            _keepAlive.Append(del);");
+            sb.AppendLine("            _keepAlive.Add(del);");
             sb.AppendLine("            var funcPtr = System.Runtime.InteropServices.Marshal.GetFunctionPointerForDelegate(del);");
             sb.AppendLine($"            var namePtr = System.Runtime.InteropServices.Marshal.StringToHGlobalAnsi({callbackRustName});");
             sb.AppendLine("            register_function(namePtr, funcPtr);");
