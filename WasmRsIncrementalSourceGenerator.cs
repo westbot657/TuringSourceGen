@@ -265,7 +265,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
 
 
             sb.AppendLine("    private GCHandle internalMemoryHandle;");
-            sb.AppendLine($"    private {className}Rs structInst;");
+            sb.AppendLine($"    public {className}Rs structInst;");
             sb.AppendLine($"    public {className}({wrapped.Type} wrappedObject)");
             sb.AppendLine("    {");
             sb.AppendLine($"        this.{wrapped.FieldName} = wrappedObject;");
@@ -550,6 +550,9 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             .Where(m => m.GetAttributes()
                 .Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.RustCallback"));
 
+        sb.AppendLine("        private static System.Collections.Generic.List<Delegate> _keepAlive = new System.Collections.Generic.List<Delegate>();");
+
+        
         foreach (var callback in callbackMethods)
         {
             var callbackAttr = callback.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.RustCallback");
@@ -588,7 +591,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             {
                 retConverter = ConversionTypes[ret];
                 retConverter2 = ConversionTypes[retConverter.opposite];
-                sb.AppendLine($"            var ret_out = {callback.Name}({string.Join(", ", args)});");
+                sb.AppendLine($"            var ret_out = Turing.Interop.Codec.{retConverter2.converterInfo.Name}({callback.Name}({string.Join(", ", args)}));");
                 sb.AppendLine($"            return new Turing.Interop.Parameters.Parameters().Push(ret_out).Pack();");
             }
             else
@@ -599,7 +602,6 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             
             sb.AppendLine("        }");
 
-            sb.AppendLine("        private static System.Collections.Generic.List<Delegate> _keepAlive = new System.Collections.Generic.List<Delegate>();");
             sb.AppendLine($"        public static void Bind{callback.Name}()");
             sb.AppendLine("        {");
             sb.AppendLine($"            var del = Delegate.CreateDelegate(typeof(_{callback.Name}), typeof({classSymbol.ToDisplayString()}).GetMethod(\"Wrapped{callback.Name}\"));");
