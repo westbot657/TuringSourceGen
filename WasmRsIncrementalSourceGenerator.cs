@@ -18,7 +18,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
     
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        interopBinders.Clear();
+        InteropBinders.Clear();
         var rustClassProvider = context.SyntaxProvider
             .CreateSyntaxProvider(
                 (s, _) => s is ClassDeclarationSyntax,
@@ -51,15 +51,12 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
 
     private class FieldData
     {
-        public IFieldSymbol? Field { get; set; }
         public string FieldName { get; set; } = "";
         public string Type { get; set; } = "";
-        public bool IsStatic { get; set; }
     }
 
     private class ParameterData
     {
-        public IParameterSymbol? Parameter { get; set; }
         public string Name { get; set; } = "";
         public string Type { get; set; } = "";
     }
@@ -69,14 +66,13 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
         public IMethodSymbol? MethodSymbol { get; set; }
         public string Name { get; set; } = "";
         public string ReturnType { get; set; } = "";
-        public bool IsStatic { get; set; }
         public List<ParameterData> Parameters { get; set; } = [];
     }
     
     private void GenerateCode(SourceProductionContext context, Compilation compilation,
-        ImmutableArray<ClassDeclarationSyntax> _classDeclarations)
+        ImmutableArray<ClassDeclarationSyntax> classDeclarations0)
     {
-        var classDeclarations = _classDeclarations.ToList();
+        var classDeclarations = classDeclarations0.ToList();
         // first, search for codec, since it has to be constructed before anything else
         foreach (var classDeclarationSyntax in classDeclarations)
         {
@@ -123,24 +119,20 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
                 .Where(f => f.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.RustWrapped"))
                 .Select(f => new FieldData
                 {
-                    Field = f,
                     FieldName = f.Name,
-                    Type = f.Type.ToDisplayString(),
-                    IsStatic = f.IsStatic
+                    Type = f.Type.ToDisplayString()
                 })
                 .First();
             
-            var fields = classSymbol.GetMembers()
-                .OfType<IFieldSymbol>()
-                .Where(f => f.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.RustField"))
-                .Select(f => new FieldData
-                {
-                    Field = f,
-                    FieldName = f.Name,
-                    Type = f.Type.ToDisplayString(),
-                    IsStatic = f.IsStatic
-                })
-                .ToList();
+            // var fields = classSymbol.GetMembers()
+            //     .OfType<IFieldSymbol>()
+            //     .Where(f => f.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.RustField"))
+            //     .Select(f => new FieldData
+            //     {
+            //         FieldName = f.Name,
+            //         Type = f.Type.ToDisplayString()
+            //     })
+            //     .ToList();
 
             var methods = classSymbol.GetMembers()
                 .OfType<IMethodSymbol>()
@@ -151,10 +143,8 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
                     MethodSymbol = m,
                     Name = m.Name,
                     ReturnType = m.ReturnType.ToDisplayString(),
-                    IsStatic = m.IsStatic,
                     Parameters = m.Parameters.Select(p => new ParameterData
                     {
-                        Parameter = p,
                         Name = p.Name,
                         Type = p.Type.ToDisplayString(),
                     }).ToList()
@@ -166,7 +156,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             codeBuilder.AppendLine("using System.Runtime.InteropServices;");
             codeBuilder.AppendLine($"namespace {namespaceName} {{");
             
-            ConstructSource(context, classSymbol, codeBuilder, className, wrapped, fields, methods);
+            ConstructSource(classSymbol, codeBuilder, className, wrapped, methods);
             
             codeBuilder.AppendLine("}");
 
@@ -201,17 +191,17 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
     private const string PtrDeco = "[System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]";
 
 
-    private static HashSet<string> interopBinders = [];
+    private static readonly HashSet<string> InteropBinders = [];
     
     private class RustClassConstructor(string name)
     {
         private string Name { get; } = name;
         
-        private List<string> methodDefs { get; } = [];
+        private List<string> MethodDefs { get; } = [];
         
-        private List<(string del, string func, string? rustName)> delegateNames { get; } = [];
+        private List<(string del, string func, string? rustName)> DelegateNames { get; } = [];
 
-        public void build(SourceProductionContext context, ITypeSymbol classSymbol, StringBuilder sb)
+        public void Build(ITypeSymbol classSymbol, StringBuilder sb)
         {
             sb.AppendLine( "[StructLayout(LayoutKind.Sequential)]");
             sb.AppendLine($"public struct {Name}Rs");
@@ -223,18 +213,18 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             sb.AppendLine($"public partial class {Name} : IDisposable");
             sb.AppendLine( "{");
 
-            foreach (var methodDef in methodDefs)
+            foreach (var methodDef in MethodDefs)
             {
                 sb.AppendLine($"    {methodDef}");
             }
             
-            interopBinders.Add($"{classSymbol.ToDisplayString()}.BindInteropFunctions();");
+            InteropBinders.Add($"{classSymbol.ToDisplayString()}.BindInteropFunctions();");
             sb.AppendLine("    private static System.Collections.Generic.List<Delegate> _keepAlive = new System.Collections.Generic.List<Delegate>();");
             sb.AppendLine("    public static void BindInteropFunctions()");
             sb.AppendLine("    {");
 
             var useVar = true;
-            foreach (var delegateName in delegateNames)
+            foreach (var delegateName in DelegateNames)
             {
                 var v = (useVar ? "var " : "");
                 useVar = false;
@@ -251,21 +241,10 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             sb.AppendLine( "}");
         }
 
-        public void ProcessWrapped(SourceProductionContext context, string className, FieldData wrapped)
+        public void ProcessWrapped(string className, FieldData wrapped)
         {
             var sb = new StringBuilder();
-
-            var attr = wrapped.Field?.GetAttributes().First(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.RustWrapped");
-
-            var rustName = "##ERROR##";
-            var x = attr?.ToString();
-            if (x != null)
-            {
-                var start = x.IndexOf("\"", StringComparison.Ordinal)+1;
-                rustName = x.Substring(start, x.LastIndexOf("\"", StringComparison.Ordinal)-start);
-            }
-
-
+            
             sb.AppendLine("private GCHandle internalMemoryHandle;");
             sb.AppendLine($"    public {className}Rs structInst;");
             sb.AppendLine($"    public {className}({wrapped.Type} wrappedObject)");
@@ -284,52 +263,51 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             sb.AppendLine("        internalMemoryHandle.Free();");
             sb.AppendLine("    }");
             
-            methodDefs.Add(sb.ToString());
+            MethodDefs.Add(sb.ToString());
             
         }
 
-        public void ProcessField(SourceProductionContext context, string className, FieldData field)
+        // public void ProcessField(SourceProductionContext context, string className, FieldData field)
+        // {
+        //     
+        // }
+
+        private static string? GetRsClassName(IMethodSymbol? methodSymbol)
         {
+            var containingType = methodSymbol?.ContainingType;
             
-        }
-        
-        string GetRsClassName(IMethodSymbol methodSymbol)
-        {
-            var containingType = methodSymbol.ContainingType;
+            if (containingType is null) return null;
 
             foreach (var member in containingType.GetMembers())
             {
-                if (member is IFieldSymbol fieldSymbol)
+                if (member is not IFieldSymbol fieldSymbol) continue;
+                foreach (var attributeData in fieldSymbol.GetAttributes())
                 {
-                    foreach (var attributeData in fieldSymbol.GetAttributes())
-                    {
-                        var x = "Turing.Interop.RustWrapped(\"".Length;
-                        return attributeData.ToString().Substring(x, attributeData.ToString().Length-2 - x);
+                    var x = "Turing.Interop.RustWrapped(\"".Length;
+                    return attributeData.ToString().Substring(x, attributeData.ToString().Length-2 - x);
                         
-                    }
                 }
             }
             return null;
         }
 
-        public void ProcessMethod(SourceProductionContext context, string className, MethodData method)
+        public void ProcessMethod(string className, MethodData method)
         {
             var name = method.Name;
             var sb = new StringBuilder();
 
             var ret = method.ReturnType;
-            var retConverter = (opposite : "void", converterInfo: new MethodData());
             var retConverter2 = (opposite : "void", converterInfo: new MethodData());
             if (ret != "void")
             {
-                retConverter = ConversionTypes[ret];
+                var retConverter = ConversionTypes[ret];
                 retConverter2 = ConversionTypes[retConverter.opposite];
             }
             
             
             List<string> argConversions = [];
             
-            List<string> parameters = [];
+            // List<string> parameters = [];
             List<string> args = [];
 
             var i = 1;
@@ -339,12 +317,12 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
                 var paramTypeConverter = ConversionTypes[paramType];
                 
                 args.Add($"{param.Name}Converted");
-                parameters.Add($"{paramTypeConverter.opposite} {param.Name}");
+                // parameters.Add($"{paramTypeConverter.opposite} {param.Name}");
                 argConversions.Add($"        var {param.Name}Converted = Codec.{paramTypeConverter.converterInfo.Name}(convertedParams.GetParameter<{paramTypeConverter.opposite}>({i++}));");
             }
-            var joinedParams = string.Join(", ", parameters.ToArray());
-            parameters.Insert(0, $"{className}Rs instanceRs");
-            var joinedParams2 = string.Join(", ", parameters.ToArray());
+            // var joinedParams = string.Join(", ", parameters.ToArray());
+            // parameters.Insert(0, $"{className}Rs instanceRs");
+            // var joinedParams2 = string.Join(", ", parameters.ToArray());
 
             var joinedArgs = string.Join(", ", args.ToArray());
 
@@ -363,14 +341,14 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
                 var start = x.IndexOf("\"", StringComparison.Ordinal);
                 rustName = x.Substring(start, x.LastIndexOf("\"", StringComparison.Ordinal)-start+1);
             }
-            
-            var class_rustName = GetRsClassName(method.MethodSymbol);
 
-            delegateNames.Add(
+            var classRustName = GetRsClassName(method.MethodSymbol);
+
+            DelegateNames.Add(
                 (
                     $"Delegate{name}",
                     $"{name}Rs",
-                    "\"" + class_rustName + "_" + rustName.Substring(1, rustName.Length-1)
+                    "\"" + classRustName + "_" + rustName.Substring(1, rustName.Length-1)
                 )
             );
 
@@ -399,34 +377,34 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
 
             sb.AppendLine("    }");
             
-            methodDefs.Add(sb.ToString());
+            MethodDefs.Add(sb.ToString());
         }
         
     }
 
-    private static void ConstructSource(SourceProductionContext context, ITypeSymbol classSymbol, StringBuilder codeBuilder, string className,
-        FieldData? wrapped, List<FieldData> fields, List<MethodData> methods)
+    private static void ConstructSource(ITypeSymbol classSymbol, StringBuilder codeBuilder, string className,
+        FieldData? wrapped, List<MethodData> methods)
     {
         
         var constructor = new RustClassConstructor(className);
 
         if (wrapped != null)
         {
-            constructor.ProcessWrapped(context, className, wrapped);
+            constructor.ProcessWrapped(className, wrapped);
         }
         
-        foreach (var field in fields)
-        {
-            constructor.ProcessField(context, className, field);
-        }
+        // foreach (var field in fields)
+        // {
+        //     constructor.ProcessField(context, className, field);
+        // }
 
         foreach (var method in methods)
         {
-            constructor.ProcessMethod(context, className, method);
+            constructor.ProcessMethod(className, method);
         }
         
         
-        constructor.build(context, classSymbol, codeBuilder);
+        constructor.Build(classSymbol, codeBuilder);
         
     }
 
@@ -447,7 +425,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
         isEnabledByDefault: true);
 
     private static void BuildCodec(SourceProductionContext context, INamedTypeSymbol classSymbol, string namespaceName,
-        string className, List<ClassDeclarationSyntax> RustClasses, Compilation compilation)
+        string className, List<ClassDeclarationSyntax> rustClasses, Compilation compilation)
     {
         var converters = classSymbol.GetMembers()
             .OfType<IMethodSymbol>()
@@ -517,10 +495,8 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
                 MethodSymbol = methodData.m,
                 Name = methodData.data.Name,
                 ReturnType = methodData.data.ReturnType,
-                IsStatic = methodData.data.IsStatic,
                 Parameters = methodData.data.Parameters.Select(p => new ParameterData
                 {
-                    Parameter = p.p,
                     Name = p.Name,
                     Type = p.Type
                 }).ToList()
@@ -532,7 +508,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
 
         var sb = new StringBuilder();
         
-        foreach (var rustClass in RustClasses)
+        foreach (var rustClass in rustClasses)
         {
             
             // We need to get semantic model of the class to retrieve metadata.
@@ -565,11 +541,9 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
                 MethodSymbol = null,
                 Name = $"{rsClassFiltered}To{csClassFiltered}",
                 ReturnType = csClassFiltered,
-                IsStatic = true,
                 Parameters = [
                     new ParameterData
                     {
-                        Parameter = null,
                         Name = "rs",
                         Type = rsClass,
                     }
@@ -581,11 +555,9 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
                 MethodSymbol = null,
                 Name = $"{csClassFiltered}To{rsClassFiltered}",
                 ReturnType = rsClass,
-                IsStatic = true,
                 Parameters = [
                     new ParameterData
                     {
-                        Parameter = null,
                         Name = "cs",
                         Type = csClass,
                     }
@@ -677,12 +649,10 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             
             
             var ret = callback.ReturnType.ToDisplayString();
-            var retConverter = (opposite : "void", converterInfo: new MethodData());
-            var retConverter2 = (opposite : "void", converterInfo: new MethodData());
             if (ret != "void")
             {
-                retConverter = ConversionTypes[ret];
-                retConverter2 = ConversionTypes[retConverter.opposite];
+                var retConverter = ConversionTypes[ret];
+                var retConverter2 = ConversionTypes[retConverter.opposite];
                 sb.AppendLine($"            var ret_out = Turing.Interop.Codec.{retConverter2.converterInfo.Name}({callback.Name}({string.Join(", ", args)}));");
                 sb.AppendLine($"            return new Turing.Interop.Parameters.Parameters().Push(ret_out).Pack();");
             }
@@ -704,7 +674,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             sb.AppendLine("            System.Runtime.InteropServices.Marshal.FreeHGlobal(namePtr);");
             sb.AppendLine("        }");
 
-            interopBinders.Add($"Bind{callback.Name}();");
+            InteropBinders.Add($"Bind{callback.Name}();");
 
         }
         
@@ -712,7 +682,7 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
         sb.AppendLine($"        public static void {rustName}()");
         sb.AppendLine($"        {{");
         
-        foreach (var callback in interopBinders)
+        foreach (var callback in InteropBinders)
         {
             sb.AppendLine($"            {callback}");
         }
