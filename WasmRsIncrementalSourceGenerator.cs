@@ -541,6 +541,10 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             // Symbols allow us to get the compile-time information.
             if (semanticModel.GetDeclaredSymbol(rustClass) is not INamedTypeSymbol rsClassSymbol)
                 continue;
+            
+            if (!rsClassSymbol.GetAttributes()
+                    .Any(a => a.AttributeClass?.ToDisplayString() == "Turing.Interop.RustClass")) continue;
+            
             var csClass = rsClassSymbol.ToDisplayString();
             
             var rsClass = csClass + "Rs";
@@ -549,12 +553,47 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
             var rsClassFiltered = csClassFiltered + "Rs";
 
             sb.AppendLine($"        public static {csClass} {rsClassFiltered}To{csClassFiltered}({rsClass} rs) {{");
-            sb.AppendLine($"            return ({csClass}) GCHandle.FromIntPtr(rs.ptr).Target;");
+            sb.AppendLine($"            return ({csClass}) System.Runtime.InteropServices.GCHandle.FromIntPtr(rs.ptr).Target;");
             sb.AppendLine("        }");
             
             sb.AppendLine($"        public static {rsClass} {csClassFiltered}To{rsClassFiltered}({csClass} cs) {{");
             sb.AppendLine("            return cs.structInst;");
             sb.AppendLine("        }");
+            
+            ConversionTypes.Add(csClass, (rsClass, new MethodData
+            {
+                MethodSymbol = null,
+                Name = $"{rsClassFiltered}To{csClassFiltered}",
+                ReturnType = csClassFiltered,
+                IsStatic = true,
+                Parameters = [
+                    new ParameterData
+                    {
+                        Parameter = null,
+                        Name = "rs",
+                        Type = rsClass,
+                    }
+                ]
+            }));
+            
+            ConversionTypes.Add(rsClass, (csClass, new MethodData
+            {
+                MethodSymbol = null,
+                Name = $"{csClassFiltered}To{rsClassFiltered}",
+                ReturnType = rsClass,
+                IsStatic = true,
+                Parameters = [
+                    new ParameterData
+                    {
+                        Parameter = null,
+                        Name = "cs",
+                        Type = csClass,
+                    }
+                ]
+            }));
+            
+            mapBuilder.AppendLine($"            {{ \"{csClass}\", v => {rsClassFiltered}To{csClassFiltered}(({rsClass}) v) }},");
+            mapBuilder.AppendLine($"            {{ \"{rsClass}\", v => {csClassFiltered}To{rsClassFiltered}(({csClass}) v) }},");
 
         }
         
@@ -563,6 +602,8 @@ public class WasmRsIncrementalSourceGenerator : IIncrementalGenerator
         mapBuilder.AppendLine("        public static System.Func<object, object> getConverter(string type) {");
         mapBuilder.AppendLine("            return converters[type];");
         mapBuilder.AppendLine("        }");
+        
+        mapBuilder.AppendLine(sb.ToString());
         
         mapBuilder.AppendLine("    }");
         mapBuilder.AppendLine("}");
